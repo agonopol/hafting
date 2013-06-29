@@ -2,6 +2,8 @@ from glob import glob
 import scipy, scipy.io
 import os.path
 import numpy as np
+from pearson import *
+import itertools
 
 class Spike(object):
     def __init__(self, spike):
@@ -27,31 +29,39 @@ class Cell(object):
         
     def spikes(self, rate):
         samples = [0] * (self.duration() * rate)
+        times = [0] * (self.duration() * rate)
         bins = np.digitize(self.spike.ts, range(self.duration()))
         for i,spike in enumerate(self.spike.ts):
             index = int(round((spike % 1) * rate, 0) + ((bins[i]-1) * rate))
             samples[index] = 1
-        return np.array(samples)
+            times[index] = spike
+        return np.array(samples), np.array(times)
         
     def transform(self, pos, rate):
-        spikes = self.spikes(rate)
-        self.data = np.array(zip(pos, spikes))
+        spikes,times = self.spikes(rate)
+        self.data = np.array(zip(pos, spikes, times))
+        self.data = self.data[np.where(self.data[:,1] == 1)]
             
     def moving(self):
         right = np.min(self.data, axis=0)[0]
         left = np.max(self.data, axis=0)[0]
         m =  self.data[np.where((self.data[:,0] > (right) + 20) | (self.data[:,0] < (left - 20)))]
         bins = range(int(right), int(left))
-        hist,bins = np.histogram(m[np.where(m[:,1] == 1)][:,0], bins)
+        hist,bins = np.histogram(self.data[:,0], bins)
         return np.array(zip(hist, bins))
         
         
     def resting(self):
         right = np.min(self.data, axis=0)[0]
         left = np.max(self.data, axis=0)[0]
-        m = self.data[np.where((self.data[:,0] < (right + 20)) | (self.data[:,0] > (left - 20)))]
-        bins = range(int(right), int(right) + 20) + range(int(left) - 20, int(left))
-        hist,bins = np.histogram(m[np.where(m[:,1] == 1)][:,0], bins)
+        data = self.data[np.where((self.data[:,0] < (right + 20)) | (self.data[:,0] > (left - 20)))]
+        hist = [0]
+        bins = [int(data[0][2] * 1000)]
+        for spike in data:
+            if bins[-1] + 5 < int(spike[2] * 1000):
+                bins.append(int(spike[2] * 1000))
+                hist.append(0)
+            hist[-1] += 1
         return np.array(zip(hist, bins))
                     
 class Trail(object):
@@ -74,3 +84,11 @@ class Trail(object):
     def transform(self):
         for cell in self.cells:
             cell.transform(self.posx, self.rate())
+
+    def moving_offsets(self):
+        correlations = {}
+        for coomb in itertools.combinations(self.cells, 2):
+            correlation = correlogram(coomb[0].moving()[:,0], coomb[1].moving()[:,0])
+            off = offset(correlation)
+            correlations[coomb] = off
+        return correlations

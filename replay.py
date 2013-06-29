@@ -20,7 +20,6 @@ def cell_counts(files):
 def main():
     files = glob.glob(DATADIR + "*_T*.mat")
     files =  dict(filter(lambda x: x[1] == 3, cell_counts(files).iteritems()))
-    print files.keys()[0]
     trail = Trail(DATADIR, files.keys()[0])
     return trail
     
