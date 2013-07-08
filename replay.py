@@ -19,12 +19,24 @@ def cell_counts(files):
 
 def main():
     files = glob.glob(DATADIR + "*_T*.mat")
-    files =  dict(filter(lambda x: x[1] == 3, cell_counts(files).iteritems()))
-    trail = Trail(DATADIR, files.keys()[0])
-    return trail
+    files =  dict(filter(lambda x: x[1] >= 3, cell_counts(files).iteritems()))
+    trails = {}
+    for set in files.keys():
+        print "trail:", set
+        trail = Trail(DATADIR, set)
+        trail.transform()
+        trails[set] = {}
+        trails[set]['moving'] = trail.moving_offsets()
+        trails[set]['resting'] = trail.resting_offsets()
+        print "Moving:",  trails[set]['moving'] 
+        print "Resting:", trails[set]['resting']
+    return trails
     
 def smooth(data, bins):
     return np.array(zip(smooth(data, 10)[:-10], bins))
     
-trail = main()
+if __name__ == "__main__":
+    trails = main()
+    with open("results.json", 'w') as out:
+        out.write(cjson.encode(trails))
 
