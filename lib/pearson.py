@@ -44,8 +44,9 @@ def offset(cor):
     return int(off[0])
     
 if __name__ == "__main__":
-   X = [1,2,3,4,5,6,5,4,3,2,1]
-   Y = [6,5,4,3,2,1,2,3,4,5,6]
+   X = [1,2,3,4,5,6,7,8,9,10]
+   Y = [10, 9, 8, 7, 6, 5, 4, 3, 2, 1]
    cor =  correlogram(X,Y,1)
    off = offset(cor)
+   print off
    print X[off:], Y[:-off]

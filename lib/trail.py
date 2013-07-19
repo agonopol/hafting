@@ -4,27 +4,27 @@ import os.path
 import numpy as np
 from pearson import *
 import itertools
+from smooth import smooth as smth
+
+RESTINGOFFSET = 25
 
 class Spike(object):
     def __init__(self, spike):
         super(Spike, self).__init__()
         self.ts = np.array([s[0] for s in spike['cellTS']])
-        
-# class EEG(object):
-#     """docstring for EEG"""
-#     def __init__(self, egg):
-#         super(EEG, self).__init__()
-#         self.__dict__ = egg        
-
+    
+    
+def smooth(data, bins):
+    return np.array(smth(data, 10)[:-10])
+    
 class Cell(object):
     """docstring for Cell"""
-#    def __init__(self, label, spike, eg):
-    def __init__(self, label, spike):
+    def __init__(self, label, spike, smothing=True):
         super(Cell, self).__init__()
         self.label = label
         self.spike = Spike(scipy.io.loadmat(spike))
-        # self.eg = EEG(scipy.io.loadmat(eg))
         self.data = None
+        self.smothing = smothing
         
     def duration(self):
         return int(max(self.spike.ts)) + 1
@@ -54,23 +54,29 @@ class Cell(object):
             return []
         right = np.min(self.data, axis=0)[0]
         left = np.max(self.data, axis=0)[0]
-        m =  self.data[np.where((self.data[:,0] > (right) + 20) | (self.data[:,0] < (left - 20)))]
+        m =  self.data[np.where((self.data[:,0] > (right) + RESTINGOFFSET) | (self.data[:,0] < (left - RESTINGOFFSET)))]
         bins = range(int(right), int(left))
         hist,bins = np.histogram(self.data[:,0], bins)
-        return np.array(zip(hist, bins))        
+        if self.smothing:
+            return np.array(zip(smooth(hist, bins), bins))
+        else:
+            return np.array(zip(hist, bins))
                     
 class Trail(object):
     """docstring for Trail"""
-    def __init__(self, datadir, trail):
+    def __init__(self, datadir, trail, smoothing=False):
         super(Trail, self).__init__()
+        self.smoothing = smoothing
         self.pos = scipy.io.loadmat(os.path.join(datadir, trail + "_POS.mat"))
-        # egs = sorted(glob(os.path.join(datadir, trail + "_ef*.mat")))
         spikes = sorted(glob(os.path.join(datadir, trail + "_T*.mat")))
         labels = [chr(i) for i in range(ord("A"), ord("Z"))][0:len(spikes)]
-        self.cells = [Cell(label, spike) for label, spike in zip(labels, spikes)]
+        self.cells = [Cell(label, spike, smoothing) for label, spike in zip(labels, spikes)]
         self.cells = filter(lambda x: len(x.spike.ts) > 0, self.cells)
         self.posx = self._get_x(np.array([p[0] for p in self.pos['posx']]))
-#        self.transform()
+       
+    @property 
+    def valid(self):
+        return len(self.cells) > 0
 
     def _get_x(self, posx):
         mask = np.isnan(posx)
@@ -97,7 +103,8 @@ class Trail(object):
         left = np.max(self.posx)
         for i,x in enumerate(self.posx):
             #In resting region
-            if x < (right + 20) or x > (left - 20):
+            if x > (right + RESTINGOFFSET) and x < (left - RESTINGOFFSET):
+            #if x < (right + 2RESTINGOFFSET0) or x > (left - RESTINGOFFSET):
                 if r is None:
                     r = (i/float(rate))
             else:
@@ -109,9 +116,12 @@ class Trail(object):
     def resting_offsets(self):
         correlations = {}
         for coomb in itertools.combinations(self.cells, 2):
-            bins = np.arange(0, max([max(cell.resting) for cell in coomb]), .5)
+            bins = np.arange(0, max([max(cell.resting) for cell in coomb]), .02)
             hist1,_ = np.histogram(coomb[0].resting, bins)
             hist2,_ = np.histogram(coomb[1].resting, bins)
+            if self.smoothing:
+                hist1 = smooth(hist1, bins)
+                hist2 = smooth(hist2, bins)
             correlation = correlogram(hist1, hist2)
             off = offset(correlation)
             correlations["{a}/{b}".format(a=coomb[0].label, b=coomb[1].label)] = off
