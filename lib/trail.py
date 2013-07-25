@@ -16,6 +16,14 @@ class Spike(object):
     
 def smooth(data, bins):
     return np.array(smth(data, 10)[:-10])
+
+def histograms(x, y, bins, smoothing=True):
+    hist1,_ = np.histogram(x, bins)
+    hist2,_ = np.histogram(y, bins)
+    if smoothing:
+        hist1 = smooth(hist1, bins)
+        hist2 = smooth(hist2, bins)
+    return hist1, hist2
     
 class Cell(object):
     """docstring for Cell"""
@@ -29,39 +37,49 @@ class Cell(object):
     def duration(self):
         return int(max(self.spike.ts)) + 1
         
-    def spikes(self, rate):
-        samples = [0] * (self.duration() * rate)
-        times = [0] * (self.duration() * rate)
-        bins = np.digitize(self.spike.ts, range(self.duration()))
+    def spikes(self, rate, duration):
+        samples = [0] * (duration * rate)
+        times = np.arange(duration * rate) / float(rate)
+        bins = np.digitize(self.spike.ts, range(duration))
         for i,spike in enumerate(self.spike.ts):
             index = int(round((spike % 1) * rate, 0) + ((bins[i]-1) * rate)) - 1
             samples[index] = 1
             times[index] = spike
         return np.array(samples), np.array(times)
         
-    def transform(self, pos, rate, resting):
-        spikes,times = self.spikes(rate)
+    def transform(self, pos, rate, duration):
+        spikes,times = self.spikes(rate, duration)
         self.data = np.array(zip(pos, spikes, times))
-        self.data = self.data[np.where(self.data[:,1] == 1)]
-        resting = [self.spike.ts[((self.spike.ts >= r[0]) & (self.spike.ts <= r[1]))] - r[0] for r in resting]
-        self.resting = []
-        [self.resting.extend(r) for r in resting]
-        self.resting = np.array(self.resting)
-            
-    @property
-    def moving(self):
-        if self.data is None:
-            return []
+        self.resting = self._resting_()
+        self.moving = self._moving_()
+     
+    def _resting_(self):
+        resting = []
         right = np.min(self.data, axis=0)[0]
         left = np.max(self.data, axis=0)[0]
-        m =  self.data[np.where((self.data[:,0] > (right) + RESTINGOFFSET) | (self.data[:,0] < (left - RESTINGOFFSET)))]
-        bins = range(int(right), int(left))
-        hist,bins = np.histogram(self.data[:,0], bins)
-        if self.smothing:
-            return np.array(zip(smooth(hist, bins), bins))
-        else:
-            return np.array(zip(hist, bins))
-                    
+        data = self.data[(self.data[:,0] <= (right + RESTINGOFFSET)) | (self.data[:,0] >= (left - RESTINGOFFSET))]   
+        # data = self.data[(self.data[:,0] >= (right + RESTINGOFFSET)) & (self.data[:,0] <= (left - RESTINGOFFSET))]
+        where = np.append(np.append(-1, np.where(np.diff(data[:,2]) > .5)[0]), len(data) - 1)
+        for r, l in zip(where, where[1:]):
+            #Going backwards
+            if data[r+1][0] > 0:
+                chunk = data[r+1:l][::-1]
+                chunk[:,2] = abs(chunk[:,2] - data[l][2])
+                resting.extend(chunk)
+            #going forwards
+            else:
+                chunk = data[r+1:l]
+                chunk[:,2] = chunk[:,2] - data[r+1][2]
+                resting.extend(chunk)
+        resting = np.array(resting)
+        return resting[resting[:,1] == 1]
+        
+    def _moving_(self):
+        right = np.min(self.data, axis=0)[0]
+        left = np.max(self.data, axis=0)[0]
+        data = self.data[(self.data[:,0] >= (right + RESTINGOFFSET)) & (self.data[:,0] <= (left - RESTINGOFFSET))]
+        return data[data[:,1] == 1]
+
 class Trail(object):
     """docstring for Trail"""
     def __init__(self, datadir, trail, smoothing=False):
@@ -91,37 +109,14 @@ class Trail(object):
         return len(self.posx) / self.duration()  
     
     def transform(self):
-        resting = self._resting_time_()
         for cell in self.cells:
-            cell.transform(self.posx, self.rate(), resting)
+            cell.transform(self.posx, self.rate(), self.duration())
 
-    def _resting_time_(self):
-        rate = self.rate()
-        resting_time = []
-        r = None
-        right = np.min(self.posx)
-        left = np.max(self.posx)
-        for i,x in enumerate(self.posx):
-            #In resting region
-            if x > (right + RESTINGOFFSET) and x < (left - RESTINGOFFSET):
-            #if x < (right + 2RESTINGOFFSET0) or x > (left - RESTINGOFFSET):
-                if r is None:
-                    r = (i/float(rate))
-            else:
-                if r is not None:
-                    resting_time.append((r, (i/float(rate))))
-                    r = None
-        return resting_time
-    
     def resting_offsets(self):
         correlations = {}
         for coomb in itertools.combinations(self.cells, 2):
-            bins = np.arange(0, max([max(cell.resting) for cell in coomb]), .02)
-            hist1,_ = np.histogram(coomb[0].resting, bins)
-            hist2,_ = np.histogram(coomb[1].resting, bins)
-            if self.smoothing:
-                hist1 = smooth(hist1, bins)
-                hist2 = smooth(hist2, bins)
+            bins = np.arange(min([min(cell.resting[:,2]) for cell in coomb]), max([max(cell.resting[:,2]) for cell in coomb]), .02)
+            hist1, hist2 = histograms(coomb[0].resting[:,2],coomb[1].resting[:,2], bins)                
             correlation = correlogram(hist1, hist2)
             off = offset(correlation)
             correlations["{a}/{b}".format(a=coomb[0].label, b=coomb[1].label)] = off
@@ -131,7 +126,10 @@ class Trail(object):
     def moving_offsets(self):
         correlations = {}
         for coomb in itertools.combinations(self.cells, 2):
-            correlation = correlogram(coomb[0].moving[:,0], coomb[1].moving[:,0])
+            bins = np.arange(min([min(cell.moving[:,0]) for cell in coomb]), max([max(cell.moving[:,0]) for cell in coomb]), 1)
+            hist1, hist2 = histograms(coomb[0].moving[:,0],coomb[1].moving[:,0], bins, self.smoothing)
+            correlation = correlogram(hist1, hist2)
             off = offset(correlation)
             correlations["{a}/{b}".format(a=coomb[0].label, b=coomb[1].label)] = off
         return correlations
+        

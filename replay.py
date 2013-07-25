@@ -2,7 +2,7 @@ import scipy, scipy.io
 import numpy as np
 import glob
 import cjson
-from lib.trail import Trail, smooth
+from lib.trail import Trail, smooth, histograms
 import matplotlib.pyplot as plt
 from j2splat.visualize import *
 import itertools
@@ -22,7 +22,7 @@ def main(smoothing=False):
     files = glob.glob(DATADIR + "*_ef*.mat")
     files =  dict(filter(lambda x: x[1] >= 3, cell_counts(files).iteritems()))
     trails = {}
-    for set in files.keys()[0:1]:
+    for set in files.keys():
         print "trail:", set
         trail = Trail(DATADIR, set,smoothing)
         if not trail.valid:
@@ -31,47 +31,40 @@ def main(smoothing=False):
         trail.transform()
         trails[set] = {}
         trails[set]['trail'] = trail
-        # trails[set]['moving'] = trail.moving_offsets()
-        # trails[set]['resting'] = trail.resting_offsets()
-        # print "Moving:",  trails[set]['moving'] 
-        # print "Resting:", trails[set]['resting']
+        trails[set]['moving'] = trail.moving_offsets()
+        trails[set]['resting'] = trail.resting_offsets()
+        print "Moving:",  trails[set]['moving'] 
+        print "Resting:", trails[set]['resting']
     return trails
         
-def moving(f, A, B):
+def moving(f, A, B, smoothing):
     v = Visualize()
-    a = A.moving
-    b =B.moving
-    for i in xrange(min(len(a), len(b))):
-        v.append({"x":int(a[i][1]), "A":float(a[i][0]), "B":float(b[i][0])})
+    bins = np.arange(min([min(cell.moving[:,0]) for cell in [A,B]]), max([max(cell.moving[:,0]) for cell in [A,B]]), 1)
+    hist1, hist2 = histograms(A.moving[:,0], B.moving[:,0], bins, smoothing)
+    for i in xrange(len(hist1)):
+        v.append({"x":float(bins[i]), "A":float(hist1[i]), "B":float(hist2[i])})
     f.append("{A}/{B} Moving".format(A=A.label, B=B.label), v.timeseries())
 
 def resting(f, A, B, smoothing):
     v = Visualize()
-    bins = np.arange(0, max([max(cell.resting) for cell in [A,B]]), .02)
-    hist1,_ = np.histogram(A.resting, bins)
-    print "Resting:", A.resting
-    print "Moving", A.moving
-    print "Hist:", zip(hist1, bins)
-    hist2,_ = np.histogram(B.resting, bins)
-    if smoothing:
-        hist1 = smooth(hist1, bins)
-        hist2 = smooth(hist2, bins)
+    bins = np.arange(min([min(cell.resting[:,2]) for cell in [A,B]]), max([max(cell.resting[:,2]) for cell in [A,B]]), .02)
+    hist1, hist2 = histograms(A.resting[:,2],B.resting[:,2], bins)    
     for i in xrange(len(hist1)):
-         v.append({"x":int(bins[i]), "A":float(hist1[i]), "B":float(hist2[i])})
+         v.append({"x":float(bins[i]), "A":float(hist1[i]), "B":float(hist2[i])})
     f.append("{A}/{B} Resting".format(A=A.label, B=B.label), v.timeseries())
-
     
-def plot(trail, smoothing = False):
+    
+def plot(trail, smoothing = True):
     f = Frame("Moving histograms")
     for coomb in itertools.combinations(trail.cells, 2):
-        moving(f, coomb[0], coomb[1])
+        moving(f, coomb[0], coomb[1], smoothing)
         resting(f, coomb[0], coomb[1], smoothing)
     return f
 
 if __name__ == "__main__":
     trails = main(True)
     for label, trail in trails.iteritems():
-        with open("test/{label}.html".format(label=label), 'w') as out:
+        with open("results/{label}.html".format(label=label), 'w') as out:
             out.write(plot(trail['trail'], True).html())
             del trail['trail']
     with open("results.json", "w") as out:
